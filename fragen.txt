@@ -1,0 +1,193 @@
+KI Prüfung mögliche Fragen:
+
+Was wird hier gemacht:
+bereinigte_spaltennamen = [
+    col.split(':')[0] for col in spaltennamen_liste
+    if len(col.split(':')) > 1
+]
+
+Was wird hier gemacht:
+# Quick-Sanity-Check für die Spaltenanzahl
+if len(bereinigte_spaltennamen) > len(df_train.columns):
+    bereinigte_spaltennamen = bereinigte_spaltennamen[:len(df_train.columns)]
+elif len(bereinigte_spaltennamen) < len(df_train.columns):
+    bereinigte_spaltennamen.extend([f"Unnamed_{i}" for i in range(len(bereinigte_spaltennamen), len(df_train.columns))])
+
+Ergibt das Sinn?? das sind ja nur duplikate weil einige logs ja mehrfach vorkommen können, das bildet ja trotzdem die Datenlage richtig ab. wäre der Autoencoder nicht besser mit duplicates?
+# Duplikate entfernen
+anzahl_vor_dupl = df_train.shape[0]
+df_train.drop_duplicates(inplace=True)
+anzahl_nach_dupl = df_train.shape[0]
+print(f"Entferne {anzahl_vor_dupl - anzahl_nach_dupl} Duplikate.")
+
+Was macht shape?
+df_train_http.shape
+
+Ist das sinnvoll diese Spalten zu droppen? wenn ja, sollte das fefineiren ohne standardabweichung und kategorial nicht durch einen algorithmus passieren statt händisch?
+# Droppen kategorialer Spalten
+df_train_http_normal.drop([
+    'protocol_type', 'service', 'flag', 'land', 'logged_in',
+    'is_host_login', 'is_guest_login', 'result'
+], axis=1, inplace=True)
+
+# Droppen von Spalten ohne Standardabweichung
+df_train_http_normal.drop([
+    'wrong_fragment', 'urgent', 'num_failed_logins', 'su_attempted',
+    'num_file_creations', 'num_outbound_cmds'
+], axis=1, inplace=True)
+
+Wie interpretiert man die Korrealisations Heatmap?
+
+Ist die pca coverage und cross validation hier sinnvoll umgesetzt?
+def crossval_pca_coverage(data: pd.DataFrame, coverages=[0.8,0.9,0.95], k=3):
+    best_cov = coverages[0]
+    best_mse = float('inf')
+    data_np = data.to_numpy()
+    kf = KFold(n_splits=k, shuffle=False)
+    for cov in coverages:
+        fold_mses = []
+        for train_idx, val_idx in kf.split(data_np):
+            X_tr = data_np[train_idx]
+            X_val= data_np[val_idx]
+            pca_temp = PCA(n_components=cov)
+            pca_temp.fit(X_tr)
+            X_val_pca = pca_temp.transform(X_val)
+            X_val_rec = pca_temp.inverse_transform(X_val_pca)
+            mse = np.mean((X_val - X_val_rec)**2)
+            fold_mses.append(mse)
+        avg_mse = np.mean(fold_mses)
+        print(f"Coverage={cov} => avg MSE={avg_mse:.4f}")
+        if avg_mse < best_mse:
+            best_mse = avg_mse
+            best_cov = cov
+    return best_cov
+coverages = [0.8, 0.9, 0.95]
+best_cov = crossval_pca_coverage(df_train_http_normal, coverages=coverages, k=3)
+print("Beste Coverage:", best_cov)
+
+Ist die Umsetzung der Fensterbildung so sinnvoll? Passt das zu den daten und ist auch auf den Honeypot Ansatz übertragbar?
+def fenster_bilden(df_eingabe, fenster_groesse, schritt):
+    fenster_liste = []
+    for i in tqdm.tqdm(range(0, len(df_eingabe) - fenster_groesse + 1, schritt)):
+        fenster_liste.append(df_eingabe.iloc[i:i + fenster_groesse, :].to_numpy())
+    return np.array(fenster_liste)
+fenster_groesse=20
+schrittweite=10
+train_fenster = fenster_bilden(df_train_pca, fenster_groesse=fenster_groesse, schritt=schrittweite)
+print('Form der Fenster:', train_fenster.shape)
+# Shuffle
+zufalls_indices = np.arange(train_fenster.shape[0])
+np.random.shuffle(zufalls_indices)
+train_fenster_shuffle = train_fenster[zufalls_indices]
+train_fenster_shuffle.shape
+
+Warum hat der gewählte Autoencoder 3 schichten und nicht mehr oder weniger?
+
+Was ist die sigmoid function?
+
+Was ist tanh?
+
+was ist MSE und MAE
+
+Was ist die huber funktion?
+
+Was Regeln die epochen, batch size, und validations split? wie ist die Größe dieser Werte zu begründen?
+
+Wie kann ich sicher sein, dass mein Modell nicht overfitted?
+
+Ist das train fenster shuffle so richtig?
+trainings_verlauf = finales_modell.fit(
+    train_fenster_shuffle, train_fenster_shuffle[:, :, ::-1],
+    batch_size=64,
+    validation_split=0.2,
+    epochs=30,
+    callbacks=[checkpoint_final],
+    verbose=1
+)
+
+Sollte ich auch bei den testdaten das droppen anpassen? ist ja gleich wie bei den trainigsdaten
+
+Was sagen die ROC Kurve und der AUC Wert aus?
+
+Was sagt die precision recall curve aus und was ist der AP?
+
+Was ist der F1 wert und kurve?
+
+Ist das ein sinnvoller Ansatz in meinem code zur Optimierung des Schwellenwertes?
+schwellen_alle = np.sort(anomalie_scores_test)
+bester_f1 = 0
+bester_schwellenwert = 0
+for schwelle in schwellen_alle:
+    pred_schwell = (anomalie_scores_test > schwelle).astype(int)
+    akt_f1 = f1_score(test_fenster_labels, pred_schwell)
+    if akt_f1 > bester_f1:
+        bester_f1 = akt_f1
+        bester_schwellenwert = schwelle
+print(f'Bester Schwellenwert auf Basis F1={bester_schwellenwert:.4f}, F1={bester_f1:.4f}')
+final_pred = (anomalie_scores_test > bester_schwellenwert).astype(int)
+konf_matrix = confusion_matrix(test_fenster_labels, final_pred)
+print('Konfusionsmatrix:\n', konf_matrix)
+precision_erg = precision_score(test_fenster_labels, final_pred)
+recall_erg = recall_score(test_fenster_labels, final_pred)
+f1_erg = f1_score(test_fenster_labels, final_pred)
+accuracy_erg = accuracy_score(test_fenster_labels, final_pred)
+print('Endgültige Klassifikationsmetriken:\n',
+      f'Precision = {precision_erg:.4f}\n',
+      f'Recall    = {recall_erg:.4f}\n',
+      f'F1        = {f1_erg:.4f}\n',
+      f'Accuracy  = {accuracy_erg:.4f}\n')
+    
+Reichen meine gewählten iterationen für die bayesian optimization aus?
+
+Was genau macht die bayesian optimization?
+
+Ist es sinnvoll die epochen anzahl für das training starr festzulegen? Wie sollte sie gewählt werden?
+
+
+
+Grundlagen Fragen:
+
+Wie funktioniert ein Autoencoder?
+
+Sollte ich die Mathematik hinter einem ANN erläutern in meinem code?
+
+Wie funktioniert ein LSTM?
+
+Was ist Backpropagation?
+
+Ist Backpropagation hier umgesetzet?
+
+was ist kfold cross validation?
+
+Was ist die PCA coverage? Wozu braucht man sie?
+
+Was sind PCA Hauptkomponeneten?
+
+Was genau bezweckt die Fensterbildung und wie funktioniert der sliding windows Ansatz?
+
+Warum wurde ein Autoencoder mit LSTM für die Analyse der Logs gewählt? ist der Ansatz dann auch sinnvol zur erkennnung von Anomaly logs in einem Honeypot?
+
+Wie kann man genau zuordnen welche logs zusammen zu einem Angriff gehören?
+
+Wäre das Modell erweiterbar um eine Klassifizierung der Angriffstypen?
+
+Neue fragen:
+
+Ist es in meinem Modell nicht von Nachteil zu shufflen? Die Fenster sind ja in zeitlicher abhängifkeit, geht die nicht durch shuffle verloren?
+
+Wahl der Optimierungsfunktion überdenken ! adam siehe moodle
+
+bestimmte werte: epochen, dimensionen in datei speichern?
+
+Erweiterbarkeit um Klassifizierung implementieren
+
+Abhängigkeit Datensatz erwähnen
+
+mse und mae erläutern
+
+        print(f"Model architecture:\n{modell_aktuell.summary()}")
+
+        adam erklären!
+        erläutern das parameer abhängig sind von anderen
+
+            train_fenster_shuffle, train_fenster_shuffle[:, :, ::-1],
